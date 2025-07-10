@@ -1,0 +1,179 @@
+# Container Build and Push - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow builds a container image from a Dockerfile/Containerfile and pushes it
+# to a specified container registry using Podman. It supports various registries including
+# GitHub Container Registry (ghcr.io), Docker Hub, and private registries.
+#
+# Key Features:
+# - Flexible container file support (Dockerfile, Containerfile, etc.)
+# - Configurable build context and registry settings
+# - Automatic tagging with commit SHA and latest
+# - Built-in authentication handling
+# - Comprehensive error handling and logging
+# - Uses Podman for OCI-compliant container operations
+#
+# Common Use Cases:
+# - Building and deploying containerized applications
+# - Creating container images for microservices
+# - Publishing packages to container registries
+# - CI/CD pipeline integration for containerized workloads
+#
+# Registry Support:
+# - GitHub Container Registry (ghcr.io) - recommended for GitHub repositories
+# - Docker Hub (docker.io)
+# - Azure Container Registry (*.azurecr.io)
+# - AWS Elastic Container Registry
+# - Google Container Registry
+# - Private/self-hosted registries
+#
+# Usage Example:
+# ```yaml
+# jobs:
+#   build-and-push:
+#     uses: ./.github/workflows/container-build-push.yml
+#     with:
+#       image_name: "myorg/myapp"
+#       image_registry: "ghcr.io"
+#       build_context: "./src"
+#       container_file_name: "Dockerfile"
+#       commit_sha: ${{ github.sha }}
+#     secrets:
+#       image_registry_password: ${{ secrets.GITHUB_TOKEN }}
+# ```
+#
+# Security Notes:
+# - Uses minimal required permissions (contents: read, packages: write)
+# - Supports secure credential handling via secrets
+# - Defaults to GitHub token for GitHub Container Registry
+# - Validates container file existence before building
+#
+name: Container Build and Push
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        type: string
+        description: "Name of the container image (typically includes organization/repository and app suffix, e.g., 'myorg/myrepo/myapp' or 'owner/repo/app')"
+        required: true
+      image_registry:
+        type: string
+        description: "Container registry URL (e.g., ghcr.io, docker.io, or private registry)"
+        required: true
+      image_registry_username:
+        type: string
+        description: "Username for the container registry (if required). Defaults to the _token if not provided."
+        default: _token
+        required: false
+      build_context:
+        type: string
+        description: "Build context directory (default: repository root)"
+        default: "."
+        required: false
+      container_file_name:
+        type: string
+        description: "Name of the container file (Dockerfile, Containerfile, etc.). Defaults to 'Dockerfile'."
+        default: Dockerfile
+        required: false
+      commit_sha:
+        type: string
+        description: "Git commit SHA to use as the image tag. Defaults to the latest commit SHA from the current branch."
+        default: ${{ github.sha }}
+        required: false
+    secrets:
+      image_registry_password:
+        description: "Password or token for the container registry (if required). Defaults to the GitHub Actions token if not provided."
+        required: false
+
+# Environment variables for consistent image naming and registry configuration
+env:
+  IMAGE_REGISTRY: ${{ inputs.image_registry }}
+  IMAGE_TAG: ${{ inputs.image_registry }}/${{ inputs.image_name }}:${{ inputs.commit_sha }}
+  LATEST_IMAGE_TAG: ${{ inputs.image_registry }}/${{ inputs.image_name }}:latest
+  IMAGE_REGISTRY_USERNAME: ${{ inputs.image_registry_username }}
+
+jobs:
+  build-container:
+    name: Build and Push Container Image
+    runs-on: ubuntu-latest
+
+    # Minimal required permissions for security
+    permissions:
+      contents: read # Required to checkout repository code and access container files
+      packages: write # Required to push container images to GitHub Container Registry
+
+    steps:
+      # Checkout the repository to access container files and build context
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # Shallow clone for faster checkout and reduced data transfer
+
+      # Validate that the specified container file exists before proceeding
+      - name: Verify container file exists
+        run: |
+          CONTAINER_FILE_PATH="${{ inputs.build_context }}/${{ inputs.container_file_name }}"
+          if [ ! -f "$CONTAINER_FILE_PATH" ]; then
+            echo "::error::Container file '$CONTAINER_FILE_PATH' not found"
+            exit 1
+          fi
+          echo "::notice::✅ Container file found: $CONTAINER_FILE_PATH"
+          echo "CONTAINER_FILE_PATH=$CONTAINER_FILE_PATH" >> $GITHUB_ENV
+
+      # Authenticate with the container registry using Podman
+      # Supports GitHub Container Registry and other OCI-compliant registries
+      - name: Log in to Container Registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ env.IMAGE_REGISTRY_USERNAME }}
+          # Use provided password or fall back to GitHub token for GHCR
+          password: ${{ secrets.image_registry_password != '' && secrets.image_registry_password || secrets.GITHUB_TOKEN }}
+          registry: ${{ env.IMAGE_REGISTRY }}
+
+      # Build the container image using Podman with the specified container file
+      # Tags the image with both the commit SHA and latest for deployment flexibility
+      - name: Build the container image
+        run: |
+          echo "::notice::Building container image with Podman"
+          echo "::notice::Container file: $CONTAINER_FILE_PATH"
+          echo "::notice::Build context: ${{ inputs.build_context }}"
+          echo "::notice::Image tag: ${{ env.IMAGE_TAG }}"
+
+          # Build the container image using the verified container file path and build context
+          if ! podman build -t ${{ env.IMAGE_TAG }} -f "$CONTAINER_FILE_PATH" ${{ inputs.build_context }}; then
+            echo "::error::Failed to build container image"
+            exit 1
+          fi
+
+          # Tag with latest for convenience and deployment flexibility
+          if ! podman tag ${{ env.IMAGE_TAG }} ${{ env.LATEST_IMAGE_TAG }}; then
+            echo "::error::Failed to tag container image"
+            exit 1
+          fi
+
+          echo "::notice::✅ Container image built successfully"
+          echo "::notice::Created tags: ${{ env.IMAGE_TAG }}, ${{ env.LATEST_IMAGE_TAG }}"
+
+      # Push both tagged images to the container registry
+      # This ensures the image is available for deployment with both specific and latest tags
+      - name: Push the container image to registry
+        run: |
+          echo "::notice::Pushing container images to registry"
+
+          # Push the commit-specific tag for version tracking
+          echo "::notice::Pushing ${{ env.IMAGE_TAG }}"
+          if ! podman push ${{ env.IMAGE_TAG }}; then
+            echo "::error::Failed to push ${{ env.IMAGE_TAG }}"
+            exit 1
+          fi
+
+          # Push the latest tag for convenient access to most recent build
+          echo "::notice::Pushing ${{ env.LATEST_IMAGE_TAG }}"
+          if ! podman push ${{ env.LATEST_IMAGE_TAG }}; then
+            echo "::error::Failed to push ${{ env.LATEST_IMAGE_TAG }}"
+            exit 1
+          fi
+
+          echo "::notice::✅ Container images pushed successfully to ${{ env.IMAGE_REGISTRY }}"
+          echo "::notice::Available tags: ${{ inputs.commit_sha }}, latest"

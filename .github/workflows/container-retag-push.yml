@@ -1,0 +1,180 @@
+# Container Retag and Push - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow retags an existing container image with a semantic version tag
+# and pushes it to the registry. It's designed for release workflows where you want to
+# apply semantic version tags (like v1.2.3) to container images that were previously
+# built and tagged with commit SHAs.
+#
+# Key Features:
+# - Validates semantic versioning format (vX.Y.Z with optional pre-release/build metadata)
+# - Pulls existing image by commit SHA and retags with version
+# - Supports all major container registries
+# - Comprehensive error handling and validation
+# - Efficient operation (no rebuild, just retag and push)
+# - Security-focused with minimal required permissions
+#
+# Common Use Cases:
+# - Release workflows: Tag commit-based images with release versions
+# - Promoting images from development to production environments
+# - Creating stable version references for deployment
+# - Semantic versioning compliance for container releases
+# - Multi-environment deployment with version tracking
+#
+# Workflow Integration Pattern:
+# This workflow is typically used in release processes after a container image
+# has been built and tested, allowing you to apply semantic version tags
+# without rebuilding the container.
+#
+# Usage Example:
+# ```yaml
+# jobs:
+#   # First, ensure the commit-tagged image exists
+#   check-image:
+#     uses: ./.github/workflows/container-check-existing-image.yml
+#     with:
+#       image_name: "myorg/myapp"
+#       image_registry: "ghcr.io"
+#       commit_sha: "abc1234567890def"
+#
+#   # Then retag it with a semantic version
+#   release-tag:
+#     needs: check-image
+#     if: needs.check-image.outputs.should_build == 'false'
+#     uses: ./.github/workflows/container-retag-push.yml
+#     with:
+#       image_name: "myorg/myapp"
+#       image_registry: "ghcr.io"
+#       version_tag: "v1.2.3"
+#       commit_sha: "abc1234567890def"
+#     secrets:
+#       image_registry_password: ${{ secrets.GITHUB_TOKEN }}
+# ```
+#
+# Release Process Integration:
+# - Build process creates: registry/org/app:commit-sha
+# - Release process creates: registry/org/app:v1.2.3 (pointing to same image)
+# - No duplication of image layers, just additional tag reference
+#
+# Semantic Versioning Support:
+# - Standard versions: v1.0.0, v2.1.3
+# - Pre-release versions: v1.0.0-alpha, v1.0.0-beta.1
+# - Build metadata: v1.0.0+build.123, v1.0.0-alpha+dev.456
+#
+# Security Notes:
+# - Requires write permissions to push new tags
+# - Validates version tag format before processing
+# - Uses secure credential handling via secrets
+# - Short timeout to prevent resource waste
+#
+name: Container Retag and Push
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        type: string
+        description: "Name of the container image (typically includes organization/repository and app suffix, e.g., 'myorg/myrepo/myapp' or 'owner/repo/app')"
+        required: true
+      image_registry:
+        type: string
+        description: "Container registry URL (e.g., ghcr.io, docker.io, or private registry)"
+        required: true
+      image_registry_username:
+        type: string
+        description: "Username for the container registry (if required). Defaults to the _token if not provided."
+        default: _token
+        required: false
+      version_tag:
+        type: string
+        description: "Semantic version tag to apply (e.g., v1.2.3)"
+        required: true
+      commit_sha:
+        type: string
+        description: "Git commit SHA to use as the image tag. Defaults to the latest commit SHA from the current branch."
+        default: ${{ github.sha }}
+        required: false
+    secrets:
+      image_registry_password:
+        description: "Password or token for the container registry (if required). Defaults to the GitHub Actions token if not provided."
+        required: false
+
+jobs:
+  retag-and-push:
+    name: Retag and Push Container Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # Short timeout since this is just a retag operation
+
+    # Required permissions for registry operations
+    permissions:
+      packages: write # Required to push new image tags
+      contents: read # Required for basic repository access
+
+    # Environment variables for consistent image reference construction
+    env:
+      IMAGE_REGISTRY: ${{ inputs.image_registry }}
+      FULL_IMAGE_NAME: ${{ inputs.image_registry }}/${{ inputs.image_name }}
+      SOURCE_COMMIT_SHA: ${{ inputs.commit_sha }}
+      TARGET_VERSION_TAG: ${{ inputs.version_tag }}
+      IMAGE_REGISTRY_USERNAME: ${{ inputs.image_registry_username }}
+
+    steps:
+      # Validate that the version tag follows semantic versioning before proceeding
+      - name: Validate version tag format
+        run: |
+          TAG="${{ env.TARGET_VERSION_TAG }}"
+          echo "::notice::Validating tag format: ${TAG}"
+          
+          # Check semantic versioning format with optional pre-release and build metadata
+          if ! echo "${TAG}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\-]+)?(\+[a-zA-Z0-9\-]+)?$'; then
+            echo "::error::Tag ${TAG} does not follow semantic versioning format (vX.Y.Z)"
+            echo "::error::Expected format: vMAJOR.MINOR.PATCH with optional pre-release and build metadata"
+            echo "::error::Examples: v1.0.0, v2.1.3-beta, v1.2.0-alpha.1+build.123"
+            exit 1
+          fi
+          echo "::notice::✅ Tag format is valid: ${TAG}"
+
+      # Authenticate with the container registry for pull and push operations
+      - name: Log in to Container Registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ env.IMAGE_REGISTRY_USERNAME }}
+          # Use provided password or fall back to GitHub token for GHCR
+          password: ${{ secrets.image_registry_password != '' && secrets.image_registry_password || secrets.GITHUB_TOKEN }}
+          registry: ${{ env.IMAGE_REGISTRY }}
+
+      # Pull the existing commit-tagged image, retag it with version, and push
+      - name: Pull, retag and push container image
+        run: |
+          set -euo pipefail # Exit on error, undefined vars, and pipe failures
+          
+          SOURCE_IMAGE="${{ env.FULL_IMAGE_NAME }}:${{ env.SOURCE_COMMIT_SHA }}"
+          TARGET_IMAGE="${{ env.FULL_IMAGE_NAME }}:${{ env.TARGET_VERSION_TAG }}"
+          
+          echo "::notice::Source image: ${SOURCE_IMAGE}"
+          echo "::notice::Target image: ${TARGET_IMAGE}"
+
+          # Pull the source image (commit-tagged image that was previously built)
+          echo "::group::Pulling source image"
+          if ! podman pull "${SOURCE_IMAGE}"; then
+            echo "::error::Failed to pull source image: ${SOURCE_IMAGE}"
+            echo "::error::Please ensure the source image exists in the registry"
+            exit 1
+          fi
+          echo "::notice::✅ Successfully pulled source image"
+          echo "::endgroup::"
+
+          # Create a new tag pointing to the same image layers
+          echo "::group::Creating new tag"
+          podman tag "${SOURCE_IMAGE}" "${TARGET_IMAGE}"
+          echo "::notice::✅ Successfully tagged image with ${{ env.TARGET_VERSION_TAG }}"
+          echo "::endgroup::"
+
+          # Push the newly tagged image to the registry
+          echo "::group::Pushing tagged image"
+          podman push "${TARGET_IMAGE}"
+          echo "::notice::✅ Successfully pushed ${TARGET_IMAGE}"
+          echo "::endgroup::"
+          
+          echo "::notice::🎉 Container image successfully retagged and pushed!"
+          echo "::notice::📦 Image: ${TARGET_IMAGE}"

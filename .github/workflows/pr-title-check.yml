@@ -1,0 +1,140 @@
+# PR Title Check - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow validates that pull request titles follow a consistent
+# naming convention based on Conventional Commits with JIRA ticket integration.
+# It ensures PR titles are structured, traceable, and follow team standards for
+# better project management and automated tooling integration.
+#
+# Title Convention:
+# Format: <type>(<JIRA-ticket>): <description>
+# Example: feat(PROJECT-123): Add user authentication system
+#
+# Supported Types:
+# - feat: New features or functionality
+# - fix: Bug fixes and patches
+# - chore: Maintenance tasks, dependency updates
+# - docs: Documentation changes
+# - test: Adding or updating tests
+# - refactor: Code refactoring without functional changes
+# - perf: Performance improvements
+# - ci: CI/CD pipeline changes
+# - build: Build system or tooling changes
+# - style: Code formatting, linting fixes
+# - revert: Reverting previous changes
+#
+# Key Features:
+# - Validates PR titles against Conventional Commits format
+# - Enforces JIRA ticket reference in parentheses
+# - Automatically excludes Dependabot PRs
+# - Provides clear error messages with examples
+# - Supports automated changelog generation
+# - Enables semantic versioning integration
+# - Improves change tracking and release notes
+#
+# Common Use Cases:
+# - Enforcing PR title standards in team workflows
+# - Supporting automated changelog generation tools
+# - Improving traceability between PRs and JIRA tickets
+# - Enabling semantic versioning based on commit types
+# - Standardizing release note generation
+# - Supporting automated project management workflows
+#
+# Integration Benefits:
+# - Conventional Commits: Enables automated versioning and changelog tools
+# - JIRA Integration: Automatic linking between PRs and project tickets
+# - Release Automation: PR types can drive semantic version bumps
+# - Team Standards: Consistent format across all pull requests
+#
+# Usage Example:
+# ```yaml
+# name: PR Validation
+# 
+# on:
+#   pull_request:
+#     types: [opened, synchronize, reopened, edited]
+# 
+# jobs:
+#   validate-title:
+#     uses: ./.github/workflows/pr-title-check.yml
+#     with:
+#       pr_title: ${{ github.event.pull_request.title }}
+#       branch_name: ${{ github.head_ref }}
+# ```
+#
+# Valid PR Title Examples:
+# - feat(PROJ-456): Add OAuth2 authentication
+# - fix(BUG-789): Resolve memory leak in data processing
+# - docs(DOC-123): Update API documentation with examples
+# - chore(MAINT-111): Update dependencies to latest versions
+# - refactor(TECH-222): Restructure user service architecture
+#
+# JIRA Ticket Format:
+# - Must be uppercase letters followed by hyphen and numbers
+# - Examples: PROJECT-123, BUG-456, FEAT-789, DOC-111
+# - Supports any project code length (PROJ-1, PROJECT-1234, etc.)
+#
+# Exclusions:
+# - Dependabot PRs (dependabot/* branches) are automatically excluded
+# - This allows automated dependency updates without title restrictions
+#
+# Automation Support:
+# - Compatible with conventional-changelog tools
+# - Supports semantic-release automation
+# - Enables automated version bumping based on PR types
+# - Facilitates automated release note generation
+#
+name: PR Title Check
+
+on:
+  workflow_call:
+    inputs:
+      pr_title:
+        type: string
+        description: "The pull request title to validate against the naming convention (format: type(JIRA-ticket): description)"
+        required: true
+      branch_name:
+        type: string
+        description: "The branch name of the pull request (used to exclude Dependabot PRs from validation)"
+        required: false
+
+jobs:
+  check-pr-title:
+    name: Validate PR Title Convention
+    runs-on: ubuntu-latest
+
+    steps:
+      # Validate PR title format for all PRs except Dependabot
+      - name: Check PR title starts with JIRA ticket in required format
+        if: ${{ !startsWith(inputs.branch_name || '', 'dependabot/') }}
+        run: |
+          PR_TITLE="${{ inputs.pr_title }}"
+          echo "::notice::Validating PR title: $PR_TITLE"
+
+          # Define the regex pattern for PR title naming convention
+          # Format: <type>(<JIRA-ticket>): <description>
+          # - type: One of the predefined types (feat, fix, etc.)
+          # - JIRA ticket: Uppercase letters + hyphen + numbers in parentheses
+          # - description: Descriptive text explaining the change
+          # Example: feat(PROJECT-123): Add new authentication system
+          JIRA_PATTERN="^(feat|fix|chore|docs|test|refactor|perf|ci|build|style|revert)\([A-Z]+-[0-9]+\): .+"
+
+          # Validate the PR title against the pattern
+          if [[ ! "$PR_TITLE" =~ $JIRA_PATTERN ]]; then
+            echo "::error::Invalid PR title format!"
+            echo "::error::PR title must follow the format 'type(JIRA-ticket): description'"
+            echo "::error::Example: 'feat(PROJECT-123): Add new feature'"
+            echo "::error::Supported types: feat, fix, chore, docs, test, refactor, perf, ci, build, style, revert"
+            echo "::error::JIRA ticket format: uppercase letters, hyphen, numbers (e.g., PROJECT-123)"
+            echo "::error::Current PR title: $PR_TITLE"
+            exit 1
+          else
+            echo "::notice::✅ PR title is valid and follows the naming convention."
+          fi
+
+      # Skip validation for automated Dependabot PRs
+      - name: Skip validation for Dependabot
+        if: ${{ startsWith(inputs.branch_name || '', 'dependabot/') }}
+        run: |
+          echo "::notice::Skipping PR title validation for Dependabot PR: ${{ inputs.pr_title }}"
+          echo "::notice::Dependabot PRs are automatically excluded from title naming convention requirements."

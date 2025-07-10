@@ -1,0 +1,83 @@
+# Get Branch Latest Non-Merge Commit SHA - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow retrieves the SHA of the latest non-merge commit from the current branch.
+# It's useful when you need to reference the last actual code change commit, excluding merge commits
+# that don't represent direct code changes.
+#
+# Common Use Cases:
+# - Tagging releases with the actual code commit rather than merge commit
+# - Getting commit SHA for deployment tracking of actual changes
+# - Referencing specific code changes for notifications or reports
+# - Avoiding merge commits when determining "last meaningful change"
+#
+# How it works:
+# 1. Checks out the repository with full history
+# 2. Uses `git log --no-merges` to find the latest non-merge commit
+# 3. Falls back to the latest commit if no non-merge commits exist (edge case)
+# 4. Returns the commit SHA as an output for use in calling workflows
+#
+# Usage Example:
+# ```yaml
+# jobs:
+#   get-commit:
+#     uses: ./.github/workflows/branch-latest-nonmerge-commit-sha.yml
+#   
+#   use-commit:
+#     needs: get-commit
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Use the commit SHA
+#         run: echo "Latest code commit: ${{ needs.get-commit.outputs.commit-sha }}"
+# ```
+#
+# Outputs:
+# - commit-sha: The SHA of the latest non-merge commit (or latest commit as fallback)
+#
+name: Get Branch Latest Non-Merge Commit SHA
+
+on:
+  workflow_call:
+    outputs:
+      commit-sha:
+        description: "The latest non-merge commit SHA from the repository's current branch. Falls back to latest commit SHA if no non-merge commits exist."
+        value: ${{ jobs.get-sha.outputs.commit-sha }}
+
+jobs:
+  get-sha:
+    name: Get Non-Merge Commit SHA
+    runs-on: ubuntu-latest
+
+    # Only needs read access to repository contents
+    permissions:
+      contents: read
+
+    outputs:
+      commit-sha: ${{ steps.get-sha.outputs.commit-sha }}
+
+    steps:
+      # Checkout with full history to access all commits for git log
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history to ensure we can find non-merge commits
+
+      # Find and return the latest non-merge commit SHA
+      - name: Get non-merge commit SHA
+        id: get-sha
+        run: |
+          # Search for the most recent commit that is not a merge commit
+          # --no-merges excludes commits with more than one parent
+          # -n 1 limits to the most recent commit
+          # --format="%H" outputs only the full commit hash
+          NON_MERGE_SHA=$(git log --no-merges -n 1 --format="%H")
+
+          # Handle edge case where repository only contains merge commits
+          if [ -z "$NON_MERGE_SHA" ]; then
+            echo "::warning::No non-merge commits found. Falling back to the latest commit SHA."
+            NON_MERGE_SHA=$(git log -n 1 --format="%H")
+          fi
+
+          # Set the output for use by calling workflows
+          echo "commit-sha=$NON_MERGE_SHA" >> $GITHUB_OUTPUT
+          echo "::notice::Using commit SHA: $NON_MERGE_SHA"

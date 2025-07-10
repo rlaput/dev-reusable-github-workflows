@@ -1,0 +1,74 @@
+# Update Major Version Branch Workflow
+#
+# Purpose:
+# This workflow automatically updates major version branches (e.g., v1, v2, v3) to point to the latest
+# semantic version tag within that major version. This is commonly used for GitHub Actions repositories
+# where users want to reference a stable major version (like @v1) that automatically gets the latest
+# compatible updates.
+#
+# How it works:
+# 1. Triggers when a semantic version tag is pushed (e.g., v1.2.3, v2.0.1)
+# 2. Extracts the major version from the tag (v1 from v1.2.3)
+# 3. Force-updates the major version branch to point to the tagged commit
+# 4. This allows users to reference @v1 and automatically get v1.2.3, v1.2.4, etc.
+#
+# Example:
+# - Push tag v1.2.3 → updates branch v1 to point to v1.2.3
+# - Push tag v1.3.0 → updates branch v1 to point to v1.3.0
+# - Push tag v2.0.0 → updates branch v2 to point to v2.0.0
+#
+# Requirements:
+# - Tags must follow semantic versioning: v{major}.{minor}.{patch}
+# - Repository must have write permissions for the workflow
+#
+name: Update major version branch
+
+on:
+  push:
+    tags:
+      - "v*.*.*" # Match tags like v1.2.3, v10.0.1, etc.
+
+# Grant write permissions to update branches
+permissions:
+  contents: write
+
+jobs:
+  update-major-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository with full history to access all tags and branches
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for all tags and branches
+
+      # Configure git user for commits (using GitHub Actions bot)
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Extract major version from tag and update the corresponding branch
+      - name: Extract major version and update branch
+        run: |
+          # Get the tag that triggered this workflow
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Triggered by tag: $TAG"
+
+          # Extract major version using regex
+          # Example: v1.2.3 → MAJOR_BRANCH=v1
+          if [[ "$TAG" =~ ^(v[0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            MAJOR_BRANCH="${BASH_REMATCH[1]}"
+            echo "Major version branch to update: $MAJOR_BRANCH"
+          else
+            echo "Tag does not match semantic versioning pattern (vX.Y.Z). Exiting."
+            exit 0
+          fi
+
+          # Force update the major version branch to point to this tag's commit
+          # This ensures the major version branch always points to the latest release
+          git branch -f "$MAJOR_BRANCH" "$TAG"
+
+          # Push the updated branch to the remote repository
+          git push origin "$MAJOR_BRANCH" --force

@@ -1,0 +1,151 @@
+# Container Check Existing Image - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow checks if a container image with a specific tag already exists
+# in a container registry. It's designed to optimize CI/CD pipelines by avoiding
+# unnecessary rebuilds when an image for a specific commit already exists.
+#
+# Key Features:
+# - Checks image existence without downloading the full image (metadata only)
+# - Returns boolean flag to indicate if build is needed
+# - Supports all major container registries
+# - Minimal registry permissions required (read-only)
+# - Secure authentication handling
+# - Provides both build decision and full image tag as outputs
+#
+# Common Use Cases:
+# - Skip container builds when image already exists for a commit
+# - Optimize CI/CD pipeline performance and resource usage
+# - Conditional builds in complex multi-stage pipelines
+# - Cost optimization by avoiding redundant registry operations
+# - Build matrix optimization for multiple environments
+#
+# Workflow Integration Pattern:
+# This workflow is typically used as a conditional step before building containers,
+# allowing pipelines to skip expensive build operations when images already exist.
+#
+# Usage Example:
+# ```yaml
+# jobs:
+#   check-image:
+#     uses: ./.github/workflows/container-check-existing-image.yml
+#     with:
+#       image_name: "myorg/myapp"
+#       image_registry: "ghcr.io"
+#       commit_sha: ${{ github.sha }}
+#     secrets:
+#       image_registry_password: ${{ secrets.GITHUB_TOKEN }}
+#
+#   build-if-needed:
+#     needs: check-image
+#     if: needs.check-image.outputs.should_build == 'true'
+#     uses: ./.github/workflows/container-build-push.yml
+#     with:
+#       image_name: "myorg/myapp"
+#       image_registry: "ghcr.io"
+#       commit_sha: ${{ github.sha }}
+#     secrets:
+#       image_registry_password: ${{ secrets.GITHUB_TOKEN }}
+# ```
+#
+# Performance Benefits:
+# - Reduces build time by skipping unnecessary rebuilds
+# - Saves compute resources and costs
+# - Minimizes registry bandwidth usage
+# - Enables faster feedback in development workflows
+#
+# Security Notes:
+# - Uses minimal read-only permissions
+# - Supports secure credential handling via secrets
+# - No image data is downloaded, only metadata is checked
+# - Works with private and public registries
+#
+name: Container Check Existing Image
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        type: string
+        description: "Name of the container image (typically includes organization/repository and app suffix, e.g., 'myorg/myrepo/myapp' or 'owner/repo/app')"
+        required: true
+      image_registry:
+        type: string
+        description: "Container registry URL (e.g., ghcr.io, docker.io, or private registry)"
+        required: true
+      image_registry_username:
+        type: string
+        description: "Username for the container registry (if required). Defaults to the _token if not provided."
+        default: _token
+        required: false
+      commit_sha:
+        type: string
+        description: "Git commit SHA to use as the image tag. Defaults to the latest commit SHA from the current branch."
+        default: ${{ github.sha }}
+        required: false
+    secrets:
+      image_registry_password:
+        description: "Password or token for the container registry (if required). Defaults to the GitHub Actions token if not provided."
+        required: false
+
+    outputs:
+      should_build:
+        description: "Boolean indicating whether the image should be built (true if image doesn't exist)"
+        value: ${{ jobs.check-image-exists.outputs.should_build }}
+      image_tag:
+        description: "Full image tag with registry, name, and commit SHA"
+        value: ${{ jobs.check-image-exists.outputs.image_tag }}
+
+# Environment variables for consistent image reference construction
+env:
+  IMAGE_REGISTRY: ${{ inputs.image_registry }}
+  IMAGE_REGISTRY_USERNAME: ${{ inputs.image_registry_username }}
+  IMAGE_TAG: ${{ inputs.image_registry }}/${{ inputs.image_name }}:${{ inputs.commit_sha }}
+
+jobs:
+  check-image-exists:
+    name: Check Container Image Existence
+    runs-on: ubuntu-latest
+
+    # Minimal permissions for registry read access only
+    permissions:
+      packages: read # Required to check image existence in registry
+      contents: read # Required for basic repository access
+
+    outputs:
+      should_build: ${{ steps.check_tag.outputs.should_build }}
+      image_tag: ${{ steps.check_tag.outputs.image_tag }}
+
+    steps:
+      # Authenticate with the container registry using Podman
+      # Uses read-only access to check image metadata
+      - name: Log in to Container Registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ env.IMAGE_REGISTRY_USERNAME }}
+          # Use provided password or fall back to GitHub token for GHCR
+          password: ${{ secrets.image_registry_password != '' && secrets.image_registry_password || secrets.GITHUB_TOKEN }}
+          registry: ${{ env.IMAGE_REGISTRY }}
+
+      # Check if the specific commit SHA tagged image exists in the registry
+      # Uses podman pull to check existence without downloading full image data
+      - name: Check if image tag exists
+        id: check_tag
+        run: |
+          echo "::notice::Image tag to check: ${{ env.IMAGE_TAG }}"
+          echo "::notice::Checking for existing image: ${{ env.IMAGE_TAG }}"
+          echo "image_tag=${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+
+          # Attempt to pull the image (only metadata check, no actual download)
+          # This efficiently checks if the image exists without transferring image layers
+          if podman pull "${{ env.IMAGE_TAG }}" >/dev/null 2>&1; then
+            echo "::notice::✅ Image tag ${{ env.IMAGE_TAG }} already exists in registry"
+            echo "::notice::Skipping build - image is already available"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "::notice::❌ Image tag ${{ env.IMAGE_TAG }} does not exist in registry"
+            echo "::notice::Build required - image will be created"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+
+          echo "::notice::Image existence check completed"

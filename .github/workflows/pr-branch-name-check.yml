@@ -1,0 +1,124 @@
+# PR Branch Name Check - Reusable Workflow
+#
+# Purpose:
+# This reusable workflow validates that pull request branch names follow a consistent
+# naming convention that includes the change type, JIRA ticket number, and description.
+# It helps enforce team standards and improves traceability between code changes and
+# project management tickets.
+#
+# Naming Convention:
+# Format: <type>/<JIRA-ticket-number>-<description>
+# Example: feat/PROJECT-123-add-user-authentication
+#
+# Supported Types:
+# - feat: New features or functionality
+# - fix: Bug fixes and patches
+# - chore: Maintenance tasks, dependency updates
+# - docs: Documentation changes
+# - test: Adding or updating tests
+# - refactor: Code refactoring without functional changes
+# - perf: Performance improvements
+# - ci: CI/CD pipeline changes
+# - build: Build system or tooling changes
+# - style: Code formatting, linting fixes
+# - revert: Reverting previous changes
+#
+# Key Features:
+# - Validates branch names against regex pattern
+# - Automatically excludes Dependabot branches
+# - Provides clear error messages with examples
+# - Supports JIRA ticket integration
+# - Enforces consistent team naming standards
+# - Improves change traceability and organization
+#
+# Common Use Cases:
+# - Enforcing branch naming standards in team workflows
+# - Improving traceability between code changes and tickets
+# - Standardizing pull request organization
+# - Supporting automated ticket linking and tracking
+# - Maintaining consistent development workflows
+#
+# Integration with JIRA:
+# The branch naming convention is designed to support automatic linking
+# between GitHub pull requests and JIRA tickets, enabling better project
+# tracking and development workflow integration.
+#
+# Usage Example:
+# ```yaml
+# name: PR Validation
+# 
+# on:
+#   pull_request:
+#     types: [opened, synchronize, reopened]
+# 
+# jobs:
+#   validate-branch:
+#     uses: ./.github/workflows/pr-branch-name-check.yml
+#     with:
+#       branch_name: ${{ github.head_ref }}
+# ```
+#
+# Valid Branch Name Examples:
+# - feat/PROJ-456-user-authentication
+# - fix/BUG-789-memory-leak-fix
+# - docs/DOC-123-api-documentation
+# - chore/MAINT-111-dependency-updates
+#
+# Exclusions:
+# - Dependabot branches (dependabot/*) are automatically excluded
+# - This allows automated dependency updates without naming restrictions
+#
+# Error Handling:
+# - Provides detailed error messages when validation fails
+# - Shows expected format and examples for correction
+# - Lists all supported branch types for reference
+#
+name: PR Branch Name Check
+
+on:
+  workflow_call:
+    inputs:
+      branch_name:
+        type: string
+        description: "The branch name to validate against the naming convention (format: type/JIRA-ticket-number-description)"
+        required: true
+
+jobs:
+  check-branch-name:
+    name: Validate Branch Name Convention
+    runs-on: ubuntu-latest
+
+    steps:
+      # Validate branch name format for all branches except Dependabot
+      - name: Validate branch name
+        if: ${{ !startsWith(inputs.branch_name || '', 'dependabot/') }}
+        run: |
+          BRANCH_NAME="${{ inputs.branch_name }}"
+          echo "::notice::Validating branch name: $BRANCH_NAME"
+
+          # Define the regex pattern for branch naming convention
+          # Format: <type>/<JIRA-ticket-number>-<description>
+          # - type: One of the predefined branch types
+          # - JIRA ticket: Project code + hyphen + number (e.g., PROJECT-123)
+          # - description: Descriptive text with hyphens (kebab-case)
+          # Example: feat/PROJECT-123-add-new-feature
+          BRANCH_PATTERN="^(feat|fix|chore|docs|test|refactor|perf|ci|build|style|revert)/[a-zA-Z]+-[0-9]+-.+"
+
+          # Validate the branch name against the pattern
+          if [[ ! "$BRANCH_NAME" =~ $BRANCH_PATTERN ]]; then
+            echo "::error::Invalid branch name format!"
+            echo "::error::Branch name must follow the format 'type/JIRA-ticket-number-description'"
+            echo "::error::Example: 'feat/PROJECT-123-add-readme'"
+            echo "::error::Supported types: feat, fix, chore, docs, test, refactor, perf, ci, build, style, revert"
+            echo "::error::Current branch name: $BRANCH_NAME"
+            exit 1
+          else
+            echo "::notice::✅ Branch name is valid and follows the naming convention."
+          fi
+
+      # Skip validation for automated Dependabot branches
+      - name: Skip validation for Dependabot
+        if: ${{ startsWith(inputs.branch_name || '', 'dependabot/') }}
+        run: |
+          echo "::notice::Skipping branch name validation for Dependabot branch: ${{ inputs.branch_name }}"
+          echo "::notice::Dependabot branches are automatically excluded from naming convention requirements."
