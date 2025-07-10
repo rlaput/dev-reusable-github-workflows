@@ -14,7 +14,6 @@ A collection of reusable GitHub Actions workflows designed to streamline develop
     - [Container Retag and Push](#container-retag-and-push-container-retag-pushyml)
   - [Utility Workflows](#utility-workflows)
     - [Branch Latest Non-Merge Commit SHA](#branch-latest-non-merge-commit-sha-branch-latest-nonmerge-commit-shayml)
-    - [Update Major Branch](#update-major-branch-_update-major-branchyml)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Setup Instructions](#setup-instructions)
@@ -45,7 +44,7 @@ Validates pull request titles against Conventional Commits format with JIRA tick
 ```yaml
 jobs:
   validate-title:
-    uses: ./.github/workflows/pr-title-check.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/pr-title-check.yml@v1
     with:
       pr_title: ${{ github.event.pull_request.title }}
       branch_name: ${{ github.head_ref }}
@@ -68,7 +67,7 @@ Validates branch names follow consistent naming conventions with JIRA integratio
 ```yaml
 jobs:
   validate-branch:
-    uses: ./.github/workflows/pr-branch-name-check.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/pr-branch-name-check.yml@v1
     with:
       branch_name: ${{ github.head_ref }}
 ```
@@ -93,7 +92,7 @@ Builds and pushes container images to registries using Podman.
 ```yaml
 jobs:
   build-and-push:
-    uses: ./.github/workflows/container-build-push.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/container-build-push.yml@v1
     with:
       image_name: "myorg/myapp"
       image_registry: "ghcr.io"
@@ -134,7 +133,7 @@ Retrieves the SHA of the latest non-merge commit from the current branch.
 ```yaml
 jobs:
   get-commit:
-    uses: ./.github/workflows/branch-latest-nonmerge-commit-sha.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/branch-latest-nonmerge-commit-sha.yml@v1
   
   deploy:
     needs: get-commit
@@ -143,9 +142,6 @@ jobs:
       - name: Deploy using commit SHA
         run: echo "Deploying ${{ needs.get-commit.outputs.commit_sha }}"
 ```
-
-#### Update Major Branch (`_update-major-branch.yml`)
-Internal workflow for maintaining major version branches.
 
 ## Getting Started
 
@@ -156,13 +152,33 @@ Internal workflow for maintaining major version branches.
 
 ### Setup Instructions
 
-1. **Copy workflows**: Copy the desired workflow files to your repository's `.github/workflows/` directory.
+You can use these workflows in two ways:
+
+#### Option 1: Reference External Workflows (Recommended)
+Reference the workflows directly from this repository without copying files:
+
+1. **Reference workflows**: Use the workflows directly from this repository in your workflow files using the format `rlaput/dev-reusable-github-workflows/.github/workflows/<workflow-name>.yml@v1`.
 
 2. **Configure secrets**: Set up necessary secrets in your repository settings:
    - `GITHUB_TOKEN` (automatically available)
    - Container registry credentials (if using container workflows)
 
 3. **Create workflow files**: Create calling workflows in your repository that reference these reusable workflows.
+
+#### Option 2: Copy Workflows Locally
+Copy the workflow files to your repository for local customization:
+
+1. **Copy workflows**: Copy the desired workflow files to your repository's `.github/workflows/` directory.
+
+2. **Update references**: Change the `uses:` statements in your calling workflows to use relative paths (e.g., `./.github/workflows/pr-title-check.yml`).
+
+3. **Configure secrets**: Set up necessary secrets in your repository settings:
+   - `GITHUB_TOKEN` (automatically available)
+   - Container registry credentials (if using container workflows)
+
+4. **Customize as needed**: Modify the copied workflows to fit your specific requirements.
+
+**Note**: Option 1 is recommended as it ensures you always get the latest updates and bug fixes automatically when using the `@v1` tag.
 
 ### Example: Complete PR Validation Setup
 
@@ -177,13 +193,13 @@ on:
 
 jobs:
   validate-title:
-    uses: ./.github/workflows/pr-title-check.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/pr-title-check.yml@v1
     with:
       pr_title: ${{ github.event.pull_request.title }}
       branch_name: ${{ github.head_ref }}
 
   validate-branch:
-    uses: ./.github/workflows/pr-branch-name-check.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/pr-branch-name-check.yml@v1
     with:
       branch_name: ${{ github.head_ref }}
 ```
@@ -203,7 +219,7 @@ on:
 
 jobs:
   check-existing:
-    uses: ./.github/workflows/container-check-existing-image.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/container-check-existing-image.yml@v1
     with:
       image_name: "myorg/myapp"
       image_registry: "ghcr.io"
@@ -214,7 +230,7 @@ jobs:
   build-and-push:
     needs: check-existing
     if: needs.check-existing.outputs.image_exists == 'false'
-    uses: ./.github/workflows/container-build-push.yml
+    uses: rlaput/dev-reusable-github-workflows/.github/workflows/container-build-push.yml@v1
     with:
       image_name: "myorg/myapp"
       image_registry: "ghcr.io"
